@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "db:init": "node src/init-db.js",
-    "start": "node src/server.js",
+    "start": "node src/init-db.js && node src/server.js",
     "test": "node src/test.js",
     "db:bersih": "node src/bersih.js",
     "sandi": "node src/ganti-sandi.js"
