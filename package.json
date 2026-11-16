@@ -1,0 +1,20 @@
+{
+  "name": "habibie-rent-car-backend",
+  "version": "1.0.0",
+  "description": "Backend Sistem Informasi Internal Pengelolaan Booking dan Ketersediaan Unit pada Habibie Rent Car",
+  "main": "src/server.js",
+  "scripts": {
+    "db:init": "node src/init-db.js",
+    "start": "node src/server.js",
+    "test": "node src/test.js",
+    "db:bersih": "node src/bersih.js",
+    "sandi": "node src/ganti-sandi.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0"
+  }
+}
