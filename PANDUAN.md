@@ -21,9 +21,13 @@ DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=
 DB_NAME=habibie_rent_car
-JWT_SECRET=isi-dengan-teks-acak-panjang-buatan-sendiri
+JWT_SECRET=
 ```
-(`DB_PASSWORD` dikosongkan karena XAMPP awalnya tanpa kata sandi.) Lanjutkan:
+(`DB_PASSWORD` dikosongkan karena XAMPP awalnya tanpa kata sandi.) **`JWT_SECRET` wajib diisi.** Jalankan perintah ini di PowerShell, salin teks acak yang muncul, lalu tempel setelah tanda `=` di `.env` dan simpan:
+```
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+Tanpa `JWT_SECRET` yang valid, server menolak menyala dan menampilkan pesan yang menjelaskan caranya. Lanjutkan:
 ```
 npm run db:init
 ```
@@ -34,7 +38,7 @@ Hasil yang benar: `19 unit dimasukkan.` dan `Basis data siap: habibie_rent_car`.
 npm test
 npm run db:bersih
 ```
-Hasil yang benar: `Hasil: 50 lulus, 0 gagal`. Perintah kedua menghapus data uji.
+Hasil yang benar: `Hasil: 96 lulus, 0 gagal`. Perintah kedua menghapus data uji. **Peringatan:** `npm test` menghapus semua data pemesanan yang ada, jadi jangan dijalankan setelah sistem dipakai sungguhan. Untuk memeriksa modul keamanan tanpa menyentuh data, pakai `npm run test:keamanan` (aman kapan saja).
 
 ## D. Ganti kata sandi akun awal
 ```
@@ -57,6 +61,7 @@ Biarkan jendela PowerShell terbuka. Buka browser ke **http://localhost:3000**, l
 5. **Pengembalian**: isi BBM saat kembali, kondisi, serta denda, biaya BBM, dan ganti rugi secara manual, lalu selesaikan.
 6. **Laporan**: pilih bulan dan tahun, coba Cetak per bagian dan Unduh CSV.
 7. **Servis unit**: buat jadwal servis, lalu cek di Ketersediaan unit itu tidak tersedia.
+8. **Kelola unit**: di halaman Ketersediaan klik **+ Tambah unit**, isi nama, transmisi, tarif, lalu simpan; kartu unit baru muncul. Klik **Edit** untuk mengubah data, atau **Nonaktifkan** untuk menyembunyikan unit (unit yang masih punya booking aktif akan ditolak). Unit nonaktif ada di daftar "Unit nonaktif" di bagian bawah halaman dan bisa diaktifkan kembali.
 
 ## G. Dipakai oleh beberapa orang
 - Satu komputer menjalankan `npm start`. Cari alamat IP-nya dengan `ipconfig` (baris IPv4, misalnya 192.168.1.10).

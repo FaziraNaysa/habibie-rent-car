@@ -5,7 +5,7 @@ const { pool } = require('./db');
 let ok = 0, gagal = 0, token = '', base = '';
 const cek = (nama, kondisi, info = '') => { kondisi ? ok++ : gagal++; console.log((kondisi ? '  ✓ ' : '  ✗ ') + nama + (kondisi ? '' : '  -> ' + info)); };
 async function api(method, url, body, tok = token) {
-  const r = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'HabibieRentCar', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { s: r.status, d: await r.json().catch(() => ({})) };
 }
 const hariIni = new Date(); const tgl = (n, j = '08:00') => { const d = new Date(Date.now() + n * 864e5 + 7 * 36e5); return d.toISOString().slice(0, 10) + 'T' + j; };
@@ -13,6 +13,7 @@ const hariIni = new Date(); const tgl = (n, j = '08:00') => { const d = new Date
 (async () => {
   const srv = app.listen(0); base = 'http://localhost:' + srv.address().port;
   await pool.query('DELETE FROM jejak_audit'); await pool.query('DELETE FROM pembayaran'); await pool.query('DELETE FROM pemesanan'); await pool.query('DELETE FROM servis'); await pool.query('DELETE FROM kode_urut');
+  await pool.query("DELETE FROM unit WHERE nama LIKE 'Unit Uji %'"); await pool.query("DELETE FROM pengguna WHERE username = 'uji_nonaktif'");   // sisa uji sebelumnya yang terhenti
   console.log('Autentikasi');
   let r = await api('GET', '/api/unit', null, ''); cek('tanpa login ditolak (NF-02)', r.s === 401);
   r = await api('POST', '/api/auth/login', { username: 'dimas', password: 'salah' }, ''); cek('kata sandi salah -> 401', r.s === 401);
@@ -96,6 +97,84 @@ const hariIni = new Date(); const tgl = (n, j = '08:00') => { const d = new Date
   const d = new Date(Date.now() + 10 * 864e5);
   r = await api('GET', `/api/laporan?tahun=${d.getFullYear()}`); cek('laporan tahunan: ringkasan & rekap', r.s === 200 && r.d.ringkasan.jumlah_pemesanan > 0 && r.d.per_unit.length > 0 && r.d.daftar.length > 0, JSON.stringify(r.d.ringkasan));
   r = await api('GET', `/api/pemesanan/${bf.id}`); const ak = r.d.jejak_audit.map((a) => a.aksi); cek('jejak audit mencatat siapa & kapan (NF-06)', ['dibuat', 'pembayaran', 'diubah', 'diperpanjang', 'pengambilan', 'pengembalian'].every((x) => ak.includes(x)) && r.d.jejak_audit.every((a) => a.nama_pengguna && a.waktu), JSON.stringify(ak));
+
+  console.log('Kelola unit (tambah, ubah, nonaktifkan)');
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji A', plat: 'bm 7777 uj', transmisi: 'Matic', tarif_harian: 300000, dengan_driver: false });
+  cek('tambah unit -> 201, plat dirapikan jadi huruf besar', r.s === 201 && r.d.id && r.d.plat === 'BM 7777 UJ' && r.d.aktif === 1, JSON.stringify(r));
+  const uA = r.d.id;
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji A', transmisi: 'Manual', tarif_harian: 250000 }); cek('nama kembar ditolak 409', r.s === 409, JSON.stringify(r));
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji B', plat: 'BM 7777 UJ', transmisi: 'Manual', tarif_harian: 250000 }); cek('plat kembar ditolak 409 dan menyebut unit pemilik plat', r.s === 409 && /Unit Uji A/.test(r.d.pesan), JSON.stringify(r));
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', transmisi: 'Otomatis', tarif_harian: 250000 }); cek('transmisi di luar Manual/Matic ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', transmisi: 'Manual', tarif_harian: 0 }); cek('tarif 0 ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', transmisi: 'Manual', tarif_harian: 250000.5 }); cek('tarif pecahan ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', transmisi: 'Manual', tarif_harian: 99999999 }); cek('tarif di atas batas wajar ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: '  ', transmisi: 'Manual', tarif_harian: 250000 }); cek('nama kosong ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', plat: '!', transmisi: 'Manual', tarif_harian: 250000 }); cek('plat tidak valid ditolak 400', r.s === 400);
+  r = await api('POST', '/api/unit', { nama: 'Unit Uji C', transmisi: 'Manual', tarif_harian: 250000 }, ''); cek('tambah unit tanpa login ditolak 401', r.s === 401);
+  r = await api('GET', '/api/unit'); cek('unit baru ada di daftar aktif (20 unit) berstatus Tersedia', r.d.length === 20 && r.d.some((u) => u.id === uA && u.status_sekarang === 'Tersedia'));
+
+  r = await api('POST', '/api/pemesanan', { nama_pelanggan: 'Uji Unit', no_wa: '081200000001', unit_id: uA, bbm_ambil: 8, mulai: tgl(40), selesai: tgl(42) });
+  cek('booking di unit baru: total = tarif x hari (2 x 300.000)', r.s === 201 && r.d.total_sewa === 600000, JSON.stringify(r.d));
+  const bU = r.d.id, kU = r.d.kode;
+  r = await api('PATCH', `/api/unit/${uA}`, { aktif: false }); cek('unit yang masih punya booking tidak bisa dinonaktifkan (409, menyebut kode booking)', r.s === 409 && r.d.pesan.includes(kU), JSON.stringify(r));
+  r = await api('PATCH', `/api/unit/${uA}`, { nama: 'Unit Uji A2', tarif_harian: 500000 }); cek('ubah nama & tarif -> 200', r.s === 200 && r.d.nama === 'Unit Uji A2' && r.d.tarif_harian === 500000, JSON.stringify(r));
+  r = await api('PATCH', `/api/unit/${uA}`, { nama: 'Hiace' }); cek('mengubah nama menjadi nama unit lain ditolak 409', r.s === 409);
+  r = await api('GET', `/api/pemesanan/${bU}`); cek('ubah tarif unit tidak mengubah total booking yang sudah ada', r.d.total_sewa === 600000, JSON.stringify(r.d.total_sewa));
+  r = await api('PATCH', `/api/pemesanan/${bU}`, { catatan: 'hanya ubah catatan' }); cek('mengedit catatan booking lama tidak menghitung ulang dengan tarif baru', r.s === 200 && r.d.total_sewa === 600000, JSON.stringify(r.d.total_sewa));
+  r = await api('PATCH', `/api/pemesanan/${bU}`, { selesai: tgl(43) }); cek('perpanjang 1 hari memakai tarif lama: 3 x 300.000, bukan tarif baru', r.s === 200 && r.d.total_sewa === 900000, JSON.stringify(r.d.total_sewa));
+  r = await api('POST', '/api/pemesanan', { nama_pelanggan: 'Uji Unit 2', no_wa: '081200000002', unit_id: uA, bbm_ambil: 8, mulai: tgl(50), selesai: tgl(51) });
+  cek('booking baru memakai tarif baru (1 x 500.000)', r.s === 201 && r.d.total_sewa === 500000, JSON.stringify(r.d));
+  const bU2 = r.d.id;
+  r = await api('POST', '/api/servis', { unit_id: uA, mulai: tgl(60), selesai: tgl(61), alasan: 'uji' }); const svU = r.d.id;
+  await api('POST', `/api/pemesanan/${bU}/batal`); await api('POST', `/api/pemesanan/${bU2}/batal`);
+  r = await api('PATCH', `/api/unit/${uA}`, { aktif: false }); cek('jadwal servis mendatang juga menahan penonaktifan (409)', r.s === 409 && /servis/i.test(r.d.pesan), JSON.stringify(r));
+  await api('DELETE', `/api/servis/${svU}`);
+  r = await api('PATCH', `/api/unit/${uA}`, { aktif: false }); cek('setelah booking dibatalkan & servis dihapus, unit bisa dinonaktifkan', r.s === 200 && r.d.aktif === 0, JSON.stringify(r));
+  r = await api('GET', '/api/unit'); cek('unit nonaktif tidak ada di daftar aktif (kembali 19)', r.d.length === 19 && !r.d.some((u) => u.id === uA));
+  r = await api('GET', '/api/unit?semua=1'); cek('?semua=1 menyertakan unit nonaktif', r.d.length === 20 && r.d.some((u) => u.id === uA && u.aktif === 0));
+  r = await api('POST', '/api/pemesanan', { nama_pelanggan: 'Uji Unit 3', no_wa: '081200000003', unit_id: uA, bbm_ambil: 8, mulai: tgl(70), selesai: tgl(71) }); cek('unit nonaktif tidak bisa dibooking', r.s === 404, JSON.stringify(r));
+  r = await api('GET', `/api/ketersediaan?mulai=${tgl(70)}&selesai=${tgl(71)}`); cek('unit nonaktif tidak muncul di ketersediaan', r.s === 200 && !r.d.some((u) => u.id === uA));
+  r = await api('PATCH', `/api/unit/${uA}`, { aktif: true }); cek('unit nonaktif bisa diaktifkan kembali', r.s === 200 && r.d.aktif === 1);
+  r = await api('PATCH', `/api/unit/${uA}`, { plat: '' }); cek('plat bisa dikosongkan', r.s === 200 && r.d.plat === null, JSON.stringify(r));
+  r = await api('PATCH', '/api/unit/999999', { nama: 'x' }); cek('unit tidak ada -> 404', r.s === 404);
+  const [aud] = await pool.query("SELECT aksi, nama_pengguna FROM jejak_audit WHERE entitas = 'unit' AND entitas_id = ?", [uA]); const aksiU = aud.map((a) => a.aksi);
+  cek('jejak audit unit: dibuat, diubah, dinonaktifkan, diaktifkan (dengan nama staf)', ['dibuat', 'diubah', 'dinonaktifkan', 'diaktifkan'].every((x) => aksiU.includes(x)) && aud.every((a) => a.nama_pengguna === 'Admin'), JSON.stringify(aud));
+
+  console.log('Keamanan');
+  const http = require('http'), bcrypt = require('bcryptjs');
+  const mentah = (method, url, headers, body) => new Promise((resolve, reject) => {     // permintaan mentah: header diatur sepenuhnya oleh tes
+    const rq = http.request(base + url, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...headers } }, (rs) => {
+      let t = ''; rs.on('data', (c) => (t += c)); rs.on('end', () => resolve({ s: rs.statusCode, h: rs.headers, d: t }));
+    });
+    rq.on('error', reject); if (body) rq.write(JSON.stringify(body)); rq.end();
+  });
+  const unitX = { nama: 'Unit Uji X', transmisi: 'Manual', tarif_harian: 100000 };
+  r = await mentah('POST', '/api/unit', {}, unitX); cek('POST tanpa header CSRF ditolak 403', r.s === 403, r.d);
+  r = await mentah('POST', '/api/unit', { 'X-Requested-With': 'HabibieRentCar', Origin: 'https://jahat.example.net' }, unitX); cek('POST dari Origin situs lain ditolak 403', r.s === 403, r.d);
+  r = await mentah('POST', '/api/unit', { 'X-Requested-With': 'HabibieRentCar', 'Sec-Fetch-Site': 'cross-site' }, unitX); cek('POST bertanda cross-site ditolak 403', r.s === 403, r.d);
+  r = await mentah('PATCH', `/api/unit/${uA}`, {}, { nama: 'Diretas' }); cek('PATCH tanpa header CSRF ditolak 403', r.s === 403);
+  r = await mentah('DELETE', '/api/servis/1', {}); cek('DELETE tanpa header CSRF ditolak 403', r.s === 403);
+  r = await mentah('POST', '/api/auth/login', {}, { username: 'admin', password: 'admin123' }); cek('login pun wajib membawa header CSRF', r.s === 403);
+  const [[{ n: nX }]] = await pool.query("SELECT COUNT(*) n FROM unit WHERE nama IN ('Unit Uji X', 'Diretas')"); cek('permintaan yang ditolak tidak mengubah data', nX === 0);
+  r = await mentah('GET', '/api/unit', {}); cek('GET tanpa header CSRF tetap diizinkan', r.s === 200);
+  r = await mentah('POST', '/api/unit', { 'X-Requested-With': 'HabibieRentCar', Origin: base }, { nama: 'Unit Uji X', transmisi: 'Manual', tarif_harian: 100000 }); cek('POST dari Origin yang sama + header benar diterima', r.s === 201, r.d);
+  r = await mentah('GET', '/api/unit', {}); cek('respons API: nosniff, anti-iframe, no-store, tanpa X-Powered-By', r.h['x-content-type-options'] === 'nosniff' && r.h['x-frame-options'] === 'DENY' && r.h['cache-control'] === 'no-store' && !r.h['x-powered-by'], JSON.stringify(r.h));
+  r = await mentah('GET', '/', {}); cek('halaman utama membawa CSP yang melarang skrip inline/pihak luar', /script-src 'self'/.test(r.h['content-security-policy'] || '') && /frame-ancestors 'none'/.test(r.h['content-security-policy'] || '') && r.s === 200, r.s);
+  await pool.query('INSERT INTO pengguna (username, nama, password_hash) VALUES (?,?,?)', ['uji_nonaktif', 'Uji Nonaktif', bcrypt.hashSync('sandiUji123', 8)]);
+  r = await api('POST', '/api/auth/login', { username: 'uji_nonaktif', password: 'sandiUji123' }, ''); const tokUji = r.d.token;
+  r = await api('GET', '/api/unit', null, tokUji); cek('akun aktif dapat mengakses', r.s === 200);
+  await pool.query("UPDATE pengguna SET aktif = 0 WHERE username = 'uji_nonaktif'");
+  r = await api('GET', '/api/unit', null, tokUji); cek('akun yang dinonaktifkan langsung ditolak walau tokennya belum kedaluwarsa', r.s === 401, JSON.stringify(r));
+
+  // bersihkan data uji unit agar jumlah unit kembali 19
+  await pool.query('DELETE FROM pengguna WHERE username = ?', ['uji_nonaktif']);
+  const [ids] = await pool.query("SELECT id FROM unit WHERE nama LIKE 'Unit Uji %' OR nama = 'Diretas'");
+  for (const { id } of ids) {
+    await pool.query('DELETE FROM pembayaran WHERE pemesanan_id IN (SELECT id FROM pemesanan WHERE unit_id = ?)', [id]);
+    await pool.query('DELETE FROM pemesanan WHERE unit_id = ?', [id]); await pool.query('DELETE FROM servis WHERE unit_id = ?', [id]); await pool.query('DELETE FROM unit WHERE id = ?', [id]);
+  }
+  r = await api('GET', '/api/unit'); cek('data uji unit dibersihkan (kembali 19 unit)', r.d.length === 19, r.d.length);
+
   console.log(`\nHasil: ${ok} lulus, ${gagal} gagal`);
   srv.close(); await pool.end(); process.exit(gagal ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

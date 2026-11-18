@@ -20,7 +20,7 @@ var labelOf = function (t, inner) { return '<label>' + t + inner + '</label>'; }
 var alertBox = function (m, c) { return '<div class="al ' + (c || 'R') + '" role="alert">' + m + '</div>'; };
 
 /* ===== State & API ===== */
-var token = null, user = null, units = [], bookings = [], servis = [], cur = null, kres = null, kerr = '', lap = null, rid = 0;
+var token = null, user = null, units = [], bookings = [], servis = [], nonaktif = [], cur = null, kres = null, kerr = '', lap = null, rid = 0;
 var q = null, draft = null, wkStart = null, view = 'cal', jf = '', rep = null, pick = { ring: 1, pel: 1, uni: 1, bok: 1 };
 try { token = sessionStorage.getItem('hrc.token'); user = JSON.parse(sessionStorage.getItem('hrc.user')); } catch (e) { }
 function setSession(t, u) {
@@ -28,7 +28,7 @@ function setSession(t, u) {
   try { if (t) { sessionStorage.setItem('hrc.token', t); sessionStorage.setItem('hrc.user', JSON.stringify(u)); } else { sessionStorage.removeItem('hrc.token'); sessionStorage.removeItem('hrc.user'); } } catch (e) { }
 }
 async function api(method, url, body) {
-  var r = await fetch('/api' + url, { method: method, headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: body ? JSON.stringify(body) : undefined });
+  var r = await fetch('/api' + url, { method: method, headers: Object.assign({ 'Content-Type': 'application/json', 'X-Requested-With': 'HabibieRentCar' }, token ? { Authorization: 'Bearer ' + token } : {}), body: body ? JSON.stringify(body) : undefined });
   var d = {}; try { d = await r.json(); } catch (e) { }
   if (r.status === 401 && token && url.indexOf('/auth/login') !== 0) { setSession(null); location.hash = '#login'; throw new Error(d.pesan || 'Sesi berakhir.'); }
   if (!r.ok) { var e = new Error(d.pesan || 'Terjadi kesalahan pada server.'); e.status = r.status; throw e; }
@@ -79,16 +79,39 @@ function ketView() {
     return '<div class="card' + (ok ? '' : ' ugrey') + '"><div style="display:flex;justify-content:space-between;align-items:center"><b class="ib">' + gi('car', 28) + esc(u.nama) + '</b>' +
       badge(ok ? 'Tersedia' : a.jenis === 'Servis' ? 'Servis' : tahan ? 'Ditahan' : a.jenis, ok ? 'G' : a.jenis === 'Servis' ? 'X' : tahan ? 'W' : 'D') + '</div>' +
       '<div class="mu">' + u.transmisi + '</div><div style="margin:6px 0"><b>' + rp(u.tarif_harian) + '</b>/hari ' + (u.dengan_driver ? '<span class="b D">Termasuk driver</span>' : '') + '</div>' +
-      (ok ? '<button class="btn" data-act="buat" data-u="' + u.id + '">Buat booking</button>' : '<div class="mu">Tidak bebas: ' + (a.kode ? esc(a.kode) : 'Servis') + '</div>') + '</div>';
+      '<div class="bar" style="margin-top:8px">' + (ok ? '<button class="btn" data-act="buat" data-u="' + u.id + '">Buat booking</button>' : '<div class="mu">Tidak bebas: ' + (a.kode ? esc(a.kode) : 'Servis') + '</div>') +
+      '<button class="btn o" data-act="ue" data-u="' + u.id + '" aria-label="Ubah unit ' + esc(u.nama) + '">Edit</button></div></div>';
   }).join('');
   var opt = function (list, c) { return ['<option value="">Semua</option>'].concat(list.map(function (x) { return '<option' + (x === c ? ' selected' : '') + '>' + x + '</option>'; })).join(''); };
-  return '<h1>Ketersediaan unit</h1><div class="mu">Cek unit bebas pada periode sewa</div><div class="card" style="margin-top:14px"><div class="g2">' +
+  return '<div class="bar" style="justify-content:space-between;align-items:flex-start"><div><h1>Ketersediaan unit</h1><div class="mu">Cek unit bebas pada periode sewa</div></div><button class="btn" data-act="ut">+ Tambah unit</button></div><div class="card" style="margin-top:14px"><div class="g2">' +
     labelOf('Ambil', '<input type="datetime-local" step="1800" id="ks" value="' + q.s + '">') + labelOf('Kembali', '<input type="datetime-local" step="1800" id="ke" value="' + q.e + '">') +
     labelOf('Transmisi', '<select id="kx">' + opt(['Manual', 'Matic'], q.trans) + '</select>') + '</div><div class="bar"><button class="btn" data-act="cek">Cek ketersediaan</button></div></div>' +
     (err ? alertBox('Waktu kembali harus setelah waktu ambil.') : '') + (kerr ? alertBox(esc(kerr)) : '') +
     (held.length ? '<div class="al W ib">' + gi('warn', 24) + 'Menunggu DP menahan unit pada periode ini: ' + held.map(esc).join(', ') + '.</div>' : '') +
     '<div class="grid">' + cards + '</div>' +
-    (!err && kres && !free ? '<div class="al W">Tidak ada unit tersedia pada periode ini. <button class="btn o" data-act="buat" data-rk="1">' + gi('pair', 20) + ' Unit rekanan</button></div>' : '');
+    (!err && kres && !free ? '<div class="al W">Tidak ada unit tersedia pada periode ini. <button class="btn o" data-act="buat" data-rk="1">' + gi('pair', 20) + ' Unit rekanan</button></div>' : '') +
+    nonaktifList() + '<div id="md"></div>';
+}
+
+/* ===== Kelola unit (tambah, ubah, nonaktifkan) ===== */
+function nonaktifList() {
+  if (!nonaktif.length) return '';
+  return '<details style="margin-top:16px"><summary class="mu" style="cursor:pointer">Unit nonaktif (' + nonaktif.length + ')</summary><div class="card" style="margin-top:8px">' +
+    nonaktif.map(function (u) {
+      return '<div class="row"><span>' + esc(u.nama) + ' · ' + u.transmisi + (u.plat ? ' · ' + esc(u.plat) : '') + '</span><span class="bar"><button class="btn o" data-act="ue" data-u="' + u.id + '">Edit</button><button class="btn" data-act="uaktif" data-id="' + u.id + '">Aktifkan</button></span></div>';
+    }).join('') + '</div></details>';
+}
+function unitForm(u) {
+  var v = u || { nama: '', plat: '', transmisi: 'Manual', tarif_harian: '', dengan_driver: 0 };
+  modal('uf', u ? 'Ubah unit' : 'Tambah unit',
+    '<div class="g2">' + labelOf('Nama unit', '<input id="un" maxlength="100" value="' + esc(v.nama) + '" placeholder="Contoh: Avanza Putih">') +
+    labelOf('Plat nomor (opsional)', '<input id="up" maxlength="20" value="' + esc(v.plat) + '" placeholder="BA 1234 XX" autocapitalize="characters">') +
+    labelOf('Transmisi', '<select id="ut">' + ['Manual', 'Matic'].map(function (x) { return '<option' + (x === v.transmisi ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>') +
+    labelOf('Tarif per hari (Rp)', '<input id="ur" type="number" min="1" inputmode="numeric" value="' + esc(v.tarif_harian) + '" placeholder="Contoh: 300000">') +
+    labelOf('Termasuk driver', '<input type="checkbox" id="ud"' + (v.dengan_driver ? ' checked' : '') + '>') + '</div>' +
+    (u ? '<div class="mu" style="margin-top:8px">Perubahan tarif hanya berlaku untuk booking baru. Booking yang sudah ada tetap memakai tarif lamanya.</div>' : ''),
+    '<button class="btn" data-act="usave"' + (u ? ' data-id="' + u.id + '"' : '') + '>Simpan</button>' +
+    (u && u.aktif ? '<button class="btn d" data-act="unon" data-id="' + u.id + '">Nonaktifkan</button>' : ''));
 }
 
 /* ===== Jadwal ===== */
@@ -215,7 +238,7 @@ var modal = function (id, title, inner, ok) {
 function pcalc() {
   var b = cur, ne = $('#pe').value, out = $('#pp'), u = unitById(b.unit_id);
   if (!ne || D(ne) <= D(b.selesai)) { out.innerHTML = '<div class="mu">Pilih waktu kembali baru setelah ' + fd(b.selesai) + '.</div>'; return null; }
-  var extra = u ? (days(b.mulai, ne) - days(b.mulai, b.selesai)) * u.tarif_harian : Math.max(0, +$('#px').value || 0);
+  var extra = u ? Math.round((days(b.mulai, ne) - days(b.mulai, b.selesai)) * (b.total_sewa / days(b.mulai, b.selesai))) : Math.max(0, +$('#px').value || 0);
   out.innerHTML = '<div class="row"><span>Biaya tambahan</span><b>' + rp(extra) + '</b></div><div class="row"><span>Total sewa baru</span><b>' + rp(b.total_sewa + extra) + '</b></div>';
   return { ne: ne, extra: extra };
 }
@@ -311,12 +334,13 @@ async function route() {
     if (r === 'ketersediaan') {
       if (!q) { var t = new Date(); t.setHours(8, 0, 0, 0); q = { s: iso(t), e: iso(new Date(+t + DAY)), trans: '' }; }
       kres = null; kerr = '';
+      try { nonaktif = (await api('GET', '/unit?semua=1')).filter(function (u) { return !u.aktif; }); } catch (e) { nonaktif = []; }
       if (D(q.e) > D(q.s)) { try { kres = await api('GET', '/ketersediaan?mulai=' + q.s + '&selesai=' + q.e + (q.trans ? '&transmisi=' + q.trans : '')); } catch (e) { kerr = e.message; } }
     } else if (r === 'detail' || r === 'kembali') {
       try { cur = mapB(await api('GET', '/pemesanan/' + id)); } catch (e) { cur = null; }
     } else if (r === 'laporan') { repInit(); lap = await api('GET', '/laporan?tahun=' + rep.y + (rep.m >= 0 ? '&bulan=' + (rep.m + 1) : '')); }
     else if (r === 'booking' && !draft) draft = newDraft();
-  } catch (e) { if (my === rid && token) $('#app').innerHTML = shell('', '<h1>Gagal memuat data</h1>' + alertBox(esc(e.message)) + '<button class="btn" onclick="location.reload()">Muat ulang</button>'); return; }
+  } catch (e) { if (my === rid && token) $('#app').innerHTML = shell('', '<h1>Gagal memuat data</h1>' + alertBox(esc(e.message)) + '<button class="btn" data-act="reload">Muat ulang</button>'); return; }
   if (my !== rid) return;
   var nav = r === 'detail' || r === 'kembali' ? 'booking' : r;
   var V = { ketersediaan: ketView, jadwal: jadView, booking: bookView, detail: detView, kembali: kemView, laporan: lapView, servis: serView };
@@ -392,6 +416,19 @@ document.addEventListener('click', function (e) {
   else if (a === 'bulan') { rep = null; route(); }
   else if (a === 'csv') lapCsv();
   else if (a === 'print') lapPrint();
+  else if (a === 'ut') unitForm();
+  else if (a === 'ue') { var uu = unitById(el.dataset.u) || nonaktif.find(function (x) { return x.id === +el.dataset.u; }); if (uu) unitForm(uu); }
+  else if (a === 'usave') run(async function () {
+    var uid = el.dataset.id;
+    var body = { nama: $('#un').value.trim(), plat: $('#up').value.trim(), transmisi: $('#ut').value, tarif_harian: $('#ur').value, dengan_driver: $('#ud').checked };
+    try { await api(uid ? 'PATCH' : 'POST', '/unit' + (uid ? '/' + uid : ''), body); toast(uid ? 'Unit diperbarui.' : 'Unit ditambahkan.'); route(); } catch (x) { $('#merr').innerHTML = alertBox(esc(x.message)); }
+  });
+  else if (a === 'unon') { var un = unitById(el.dataset.id); modal('uf', 'Nonaktifkan unit?', alertBox(esc(un ? un.nama : 'Unit') + ' tidak akan tampil di ketersediaan dan tidak bisa dibooking. Bisa diaktifkan lagi dari daftar "Unit nonaktif".', 'W'), '<button class="btn d" data-act="unon2" data-id="' + el.dataset.id + '">Ya, nonaktifkan</button>'); }
+  else if (a === 'unon2') run(async function () {
+    try { await api('PATCH', '/unit/' + el.dataset.id, { aktif: false }); toast('Unit dinonaktifkan.'); route(); } catch (x) { $('#merr').innerHTML = alertBox(esc(x.message)); }
+  });
+  else if (a === 'uaktif') run(async function () { await api('PATCH', '/unit/' + el.dataset.id, { aktif: true }); toast('Unit diaktifkan kembali.'); route(); });
+  else if (a === 'reload') location.reload();
   else if (a === 'tutup') $('#md').innerHTML = '';
 });
 route();

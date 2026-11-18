@@ -4,9 +4,15 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool, tx } = require('./db');
+const { pastikanSecret, headerKeamanan, perlindunganCsrf } = require('./keamanan');
 
-const SECRET = process.env.JWT_SECRET || 'dev-secret-ganti-di-produksi';
+let SECRET;
+try { SECRET = pastikanSecret(process.env.JWT_SECRET); }   // tanpa nilai bawaan: server menolak jalan jika rahasia token belum diisi
+catch (e) { console.error('\n[KONFIGURASI] ' + e.message + '\n'); process.exit(1); }
 const app = express();
+app.disable('x-powered-by');
+app.use(headerKeamanan);
+app.use('/api', perlindunganCsrf);
 app.use(express.json());
 
 /* ===================== Util ===================== */
@@ -69,12 +75,18 @@ app.post('/api/auth/login', wrap(async (req, res) => {
   const token = jwt.sign({ id: u.id, nama: u.nama, username: u.username }, SECRET, { expiresIn: '8h' });
   res.json({ token, pengguna: { id: u.id, nama: u.nama, username: u.username } });
 }));
-const auth = (req, res, next) => {
+const SESI_BERAKHIR = 'Sesi berakhir. Silakan masuk kembali.';
+const auth = async (req, res, next) => {
+  let d;
+  try { d = jwt.verify((req.headers.authorization || '').replace(/^Bearer /, ''), SECRET, { algorithms: ['HS256'] }); }
+  catch (e) { return next(new Err(401, SESI_BERAKHIR)); }
   try {
-    const t = (req.headers.authorization || '').replace(/^Bearer /, '');
-    req.user = jwt.verify(t, SECRET);
+    // Akun yang dinonaktifkan langsung tidak bisa dipakai, tanpa menunggu token kedaluwarsa (8 jam).
+    const [[u]] = await pool.query('SELECT id, nama, username FROM pengguna WHERE id = ? AND aktif = 1', [d.id]);
+    if (!u) return next(new Err(401, SESI_BERAKHIR));
+    req.user = { id: u.id, nama: u.nama, username: u.username };
     next();
-  } catch (e) { next(new Err(401, 'Sesi berakhir. Silakan masuk kembali.')); }
+  } catch (e) { next(e); }
 };
 app.post('/api/auth/logout', auth, (req, res) => res.json({ ok: true }));   // token dibuang di sisi klien
 app.get('/api/auth/saya', auth, (req, res) => res.json(req.user));
@@ -140,8 +152,70 @@ app.get('/api/unit', wrap(async (req, res) => {
        WHEN EXISTS (SELECT 1 FROM servis s WHERE s.unit_id = u.id AND s.mulai <= NOW() AND s.selesai > NOW()) THEN 'Servis'
        WHEN EXISTS (SELECT 1 FROM pemesanan p WHERE p.unit_id = u.id AND p.status IN ('Menunggu DP','Dibooking') AND p.mulai <= NOW() AND p.selesai > NOW()) THEN 'Dibooking'
        ELSE 'Tersedia' END AS status_sekarang
-     FROM unit u WHERE u.aktif = 1 ORDER BY u.id`);
+     FROM unit u ${req.query.semua === '1' ? '' : 'WHERE u.aktif = 1'} ORDER BY u.id`);   // ?semua=1 ikut menyertakan unit nonaktif
   res.json(rows);
+}));
+
+/* ===================== Kelola unit: tambah, ubah, nonaktifkan ===================== */
+const bool = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 0);
+function bacaUnit(b, parsial) {                    // parsial = true untuk PATCH: hanya kolom yang dikirim yang divalidasi
+  const o = {}, ada = (k) => !parsial || b[k] !== undefined;
+  if (ada('nama')) o.nama = teks(b.nama, 'Nama unit', 100);
+  if (ada('transmisi')) { o.transmisi = pilih(b.transmisi, ['Manual', 'Matic'], null); if (!o.transmisi) throw new Err(400, 'Transmisi wajib dipilih (Manual atau Matic).'); }
+  if (ada('tarif_harian')) o.tarif_harian = int(b.tarif_harian, 'Tarif harian (bilangan bulat Rp1 – Rp5.000.000)', 1, 5000000);
+  if (ada('plat')) {
+    const p = String(b.plat == null ? '' : b.plat).trim().toUpperCase().replace(/\s+/g, ' ');
+    if (p && !/^[A-Z0-9][A-Z0-9 -]{1,18}[A-Z0-9]$/.test(p)) throw new Err(400, 'Plat nomor tidak valid. Contoh: BA 1234 XX.');
+    o.plat = p || null;
+  }
+  if (ada('dengan_driver')) o.dengan_driver = bool(b.dengan_driver);
+  return o;
+}
+async function pastikanUnik(c, d, kecualiId) {     // nama dan plat tidak boleh kembar dengan unit lain (aktif maupun nonaktif)
+  if (d.nama !== undefined) {
+    const [[x]] = await c.query('SELECT id FROM unit WHERE nama = ? AND id <> ? LIMIT 1', [d.nama, kecualiId || 0]);
+    if (x) throw new Err(409, `Nama unit "${d.nama}" sudah dipakai unit lain.`);
+  }
+  if (d.plat) {
+    const [[x]] = await c.query('SELECT nama FROM unit WHERE plat = ? AND id <> ? LIMIT 1', [d.plat, kecualiId || 0]);
+    if (x) throw new Err(409, `Plat ${d.plat} sudah dipakai unit "${x.nama}".`);
+  }
+}
+app.post('/api/unit', wrap(async (req, res) => {
+  const d = bacaUnit(req.body || {}, false);
+  const baru = await tx(async (c) => {
+    await pastikanUnik(c, d);
+    const [r] = await c.query('INSERT INTO unit (nama, plat, transmisi, tarif_harian, dengan_driver) VALUES (?,?,?,?,?)', [d.nama, d.plat, d.transmisi, d.tarif_harian, d.dengan_driver]);
+    await audit(c, req.user, 'unit', r.insertId, 'dibuat', d);
+    return { id: r.insertId, ...d, aktif: 1 };
+  });
+  res.status(201).json(baru);
+}));
+app.patch('/api/unit/:id', wrap(async (req, res) => {
+  const id = int(req.params.id, 'ID', 1), b = req.body || {};
+  const hasil = await tx(async (c) => {
+    const [[u]] = await c.query('SELECT * FROM unit WHERE id = ? FOR UPDATE', [id]);   // kunci yang sama dengan kunciUnit: tidak bisa berbarengan dengan pencatatan booking
+    if (!u) throw new Err(404, 'Unit tidak ditemukan.');
+    const set = bacaUnit(b, true);
+    if (b.aktif !== undefined) set.aktif = bool(b.aktif);
+    await pastikanUnik(c, set, id);
+    if (set.aktif === 0 && u.aktif) {              // jangan sembunyikan unit yang masih dipakai
+      const [[pm]] = await c.query("SELECT kode, status FROM pemesanan WHERE unit_id = ? AND status IN ('Menunggu DP','Dibooking','Disewa') ORDER BY mulai LIMIT 1", [id]);
+      if (pm) throw new Err(409, `Unit tidak dapat dinonaktifkan: masih ada pemesanan ${pm.kode} (${pm.status}). Selesaikan atau batalkan dulu.`, { pemesanan: pm.kode });
+      const [[sv]] = await c.query('SELECT mulai, selesai FROM servis WHERE unit_id = ? AND selesai > NOW() ORDER BY mulai LIMIT 1', [id]);
+      if (sv) throw new Err(409, `Unit tidak dapat dinonaktifkan: masih ada jadwal servis ${sv.mulai.slice(0, 16)} – ${sv.selesai.slice(0, 16)}. Hapus jadwal servis itu dulu.`);
+    }
+    const perubahan = {};
+    for (const k of Object.keys(set)) if (String(set[k] ?? '') !== String(u[k] ?? '')) perubahan[k] = [u[k], set[k]];
+    if (Object.keys(perubahan).length) {
+      await c.query('UPDATE unit SET ? WHERE id = ?', [Object.fromEntries(Object.keys(perubahan).map((k) => [k, set[k]])), id]);
+      const aksi = perubahan.aktif ? (set.aktif ? 'diaktifkan' : 'dinonaktifkan') : 'diubah';
+      await audit(c, req.user, 'unit', id, aksi, perubahan);
+    }
+    const [[baru]] = await c.query('SELECT * FROM unit WHERE id = ?', [id]);
+    return baru;
+  });
+  res.json(hasil);
 }));
 app.get('/api/ketersediaan', wrap(async (req, res) => {
   const mulai = dt(req.query.mulai, 'Waktu ambil'), selesai = dt(req.query.selesai, 'Waktu kembali');
@@ -245,7 +319,10 @@ app.patch('/api/pemesanan/:id', wrap(async (req, res) => {
       if (b.unit_id !== undefined) { if (sewa) throw new Err(409, 'Unit tidak dapat diganti setelah unit diambil.'); unitId = int(b.unit_id, 'Unit', 1); }
       const u = await kunciUnit(c, unitId);
       if (unitId !== p.unit_id || mulai !== p.mulai || selesai !== p.selesai) await pastikanBebas(c, unitId, mulai, selesai, id);   // periksa ulang benturan
-      total = u.tarif_harian * hari(mulai, selesai);
+      // Tarif harian booking tetap tarif saat dibuat (total lama ÷ lama sewa lama), sehingga mengubah tarif unit tidak menghitung ulang booking yang sudah ada.
+      // Tarif unit yang sekarang hanya dipakai bila unitnya diganti.
+      const tarif = unitId === p.unit_id ? Math.round(p.total_sewa / hari(p.mulai, p.selesai)) : u.tarif_harian;
+      total = tarif * hari(mulai, selesai);
       if (u.dengan_driver) dengan = 1;
     }
     Object.assign(set, { mulai, selesai, unit_id: unitId, dengan_driver: dengan, total_sewa: total });
@@ -402,6 +479,7 @@ app.use('/api', (req, res) => res.status(404).json({ pesan: 'Endpoint tidak dite
 app.use((e, req, res, next) => {
   if (e instanceof Err) return res.status(e.status).json({ pesan: e.message, ...(e.data || {}) });
   if (e.type === 'entity.parse.failed') return res.status(400).json({ pesan: 'Format JSON tidak valid.' });
+  if (e.code === 'ER_DUP_ENTRY') return res.status(409).json({ pesan: /plat/i.test(e.sqlMessage || '') ? 'Plat nomor sudah dipakai unit lain.' : 'Data yang sama sudah ada.' });
   console.error(e);
   res.status(500).json({ pesan: 'Terjadi kesalahan pada server.' });
 });
