@@ -153,28 +153,30 @@ function newDraft(o) {
   return Object.assign({ name: '', wa: '', rent: 'Harian', so: 'WhatsApp', rk: false, unitId: units[0] ? units[0].id : '', s: iso(t), e: iso(new Date(+t + DAY)), partner: '', runit: '', cost: '', price: '', driver: false, g: '', bbm: '', kondisi: '', note: '', paid: '' }, o || {});
 }
 function bookView() {
-  var d = draft, u = unitById(d.unitId);
-  var dis = '';
-  var drv = d.rk ? '' : (u && u.dengan_driver ? labelOf('Driver', '<input value="Ya, sudah termasuk tarif" disabled>') : labelOf('Pakai driver', '<select id="fd"' + dis + '><option value="0">Tidak</option><option value="1"' + (d.driver ? ' selected' : '') + '>Ya</option></select>'));
+  var d = draft, u = unitById(d.unitId), edit = !!d.id, sewa = d.st === 'Disewa';
+  var dis = sewa ? ' disabled' : '', disSr = edit ? ' disabled' : '';
+  var drv = d.rk ? '' : (u && u.dengan_driver ? labelOf('Driver', '<input value="Ya, sudah termasuk tarif" disabled>') : labelOf('Pakai driver', '<select id="fd"><option value="0">Tidak</option><option value="1"' + (d.driver ? ' selected' : '') + '>Ya</option></select>'));
   var src = d.rk
     ? labelOf('Nama rekanan', '<input id="fpn" value="' + esc(d.partner) + '">') + labelOf('Unit / plat', '<input id="fru" placeholder="Isian bebas" value="' + esc(d.runit) + '">') +
       labelOf('Biaya yang dibayar ke rekanan (Rp)', '<input id="fb" type="number" min="0" value="' + esc(d.cost) + '">') + labelOf('Harga yang ditagih ke pelanggan (Rp)', '<input id="fh" type="number" min="0" value="' + esc(d.price) + '">')
     : labelOf('Unit', '<select id="fu"' + dis + '>' + units.map(function (x) { return '<option value="' + x.id + '"' + (x.id === +d.unitId ? ' selected' : '') + '>' + esc(x.nama) + '</option>'; }).join('') + '</select>') + drv;
   var opt = function (list, c) { return list.map(function (x) { return '<option' + (x === c ? ' selected' : '') + '>' + x + '</option>'; }).join(''); };
-  return '<h1>Booking baru</h1><div id="ban"></div><div class="card" style="margin-top:14px"><div class="g2">' +
+  var pay = edit
+    ? '<div class="row"><span>Sudah dibayar</span><b>' + rp(d.paid) + '</b></div><div class="row"><span>Sisa</span><b id="t3"></b></div>'
+    : labelOf('Dibayar sekarang (Rp)', '<input id="fp" type="number" min="0" placeholder="Kosongkan jika belum bayar" value="' + esc(d.paid) + '">') +
+      '<div class="bar"><button class="btn o" data-act="pset" data-k=".5">DP 50%</button><button class="btn o" data-act="pset" data-k="1">Lunas</button></div><div class="row"><span>Sisa</span><b id="t3"></b></div><div class="mu" id="t4"></div>';
+  return '<h1>' + (edit ? 'Ubah booking ' + esc(d.kode) : 'Booking baru') + '</h1><div id="ban"></div><div class="card" style="margin-top:14px"><div class="g2">' +
     labelOf('Nama pelanggan', '<input id="fn" value="' + esc(d.name) + '">') + labelOf('Nomor WhatsApp', '<input id="fw" type="tel" placeholder="08xx" value="' + esc(d.wa) + '">') +
     labelOf('Jenis sewa', '<select id="fj">' + opt(['Harian', 'Kontrak'], d.rent) + '</select>') + labelOf('Sumber pesanan', '<select id="fso">' + opt(['WhatsApp', 'Telepon', 'Datang langsung'], d.so) + '</select>') +
-    labelOf('Sumber unit', '<select id="sr"' + dis + '><option value="0">Milik usaha</option><option value="1"' + (d.rk ? ' selected' : '') + '>Rekanan</option></select>') +
+    labelOf('Sumber unit', '<select id="sr"' + disSr + '><option value="0">Milik usaha</option><option value="1"' + (d.rk ? ' selected' : '') + '>Rekanan</option></select>') +
     labelOf('Ambil', '<input id="fs" type="datetime-local" step="1800" value="' + d.s + '"' + dis + '>') + labelOf('Kembali', '<input id="fe" type="datetime-local" step="1800" value="' + d.e + '">') + src +
     labelOf('BBM saat diambil (bar, 0–8)', '<input id="fbb" type="number" min="0" max="8" placeholder="Contoh: 4" value="' + esc(d.bbm) + '"' + dis + '>') +
     labelOf('Kondisi unit saat diambil (opsional)', '<input id="fko" placeholder="Contoh: lecet kecil di pintu kiri" value="' + esc(d.kondisi) + '">') + labelOf('Catatan', '<input id="fc" value="' + esc(d.note) + '">') + '</div></div>' +
     '<div class="card"><h2>' + gi('card', 24) + 'Jaminan</h2><div class="mu">KTP untuk penyewa luar Padang, kendaraan bermotor untuk penyewa Padang. Hanya jenisnya yang disimpan.</div><div class="bar">' +
     ['KTP', 'Kendaraan bermotor'].map(function (g) { return '<label class="sw"><input type="radio" name="j" value="' + g + '"' + (d.g === g ? ' checked' : '') + '> ' + g + '</label>'; }).join('') + '</div></div>' +
     '<div class="card"><h2>' + gi('coin', 24) + 'Pembayaran</h2>' + (d.rk ? '<div class="row"><span>Selisih (untung dari rekanan)</span><b id="sl"></b></div>' : '') +
-    '<div class="row"><span>Total sewa</span><b id="t1"></b></div>' +
-      labelOf('Dibayar sekarang (Rp)', '<input id="fp" type="number" min="0" placeholder="Kosongkan jika belum bayar" value="' + esc(d.paid) + '">') +
-      '<div class="bar"><button class="btn o" data-act="pset" data-k=".5">DP 50%</button><button class="btn o" data-act="pset" data-k="1">Lunas</button></div><div class="row"><span>Sisa</span><b id="t3"></b></div><div class="mu" id="t4"></div>' + '</div>' +
-    '<button class="btn" data-act="simpan">Simpan booking</button>';
+    '<div class="row"><span>Total sewa</span><b id="t1"></b></div>' + pay + '</div>' +
+    (edit ? '<div class="bar"><button class="btn" data-act="simpan">Simpan perubahan</button><a class="btn o" href="#detail/' + d.id + '">Batal</a></div>' : '<button class="btn" data-act="simpan">Simpan booking</button>');
 }
 function readForm() {
   var g = function (id) { var e = $('#' + id); return e ? e.value : null; }, d = draft;
@@ -185,27 +187,38 @@ function readForm() {
   if (d.rk) { d.partner = g('fpn') || ''; d.runit = g('fru') || ''; d.cost = g('fb') || ''; d.price = g('fh') || ''; }
   else { if (g('fu')) d.unitId = +g('fu'); if ($('#fd')) d.driver = g('fd') === '1'; }
 }
-function totalOf(d) { var u = unitById(d.unitId); return d.rk ? Math.max(0, +d.price || 0) : (u ? days(d.s, d.e) * u.tarif_harian : 0); }
+function totalOf(d) {
+  if (d.rk) return Math.max(0, +d.price || 0);
+  if (d.id && +d.unitId === +d.origUnitId && d.origRate) return days(d.s, d.e) * d.origRate;
+  var u = unitById(d.unitId); return u ? days(d.s, d.e) * u.tarif_harian : 0;
+}
 function calc() {
   if (!$('#t1')) return; readForm();
   var t = totalOf(draft), p = Math.max(0, +draft.paid || 0);
   $('#t1').textContent = rp(t);
-  if ($('#t3')) { $('#t3').textContent = rp(Math.max(0, t - p)); $('#t4').textContent = p >= t && t > 0 ? 'Lunas' : p > 0 ? 'DP dicatat, status Dibooking' : 'Belum bayar, status Menunggu DP'; }
+  if ($('#t3')) $('#t3').textContent = rp(Math.max(0, t - p));
+  if ($('#t4')) $('#t4').textContent = p >= t && t > 0 ? 'Lunas' : p > 0 ? 'DP dicatat, status Dibooking' : 'Belum bayar, status Menunggu DP';
   if ($('#sl')) $('#sl').textContent = rp((+draft.price || 0) - (+draft.cost || 0));
 }
 async function saveBooking() {
-  readForm(); var d = draft, bn = function (m) { $('#ban').innerHTML = alertBox(m); window.scrollTo(0, 0); };
+  readForm(); var d = draft, sewa = d.st === 'Disewa', bn = function (m) { $('#ban').innerHTML = alertBox(m); window.scrollTo(0, 0); };
   if (!d.name.trim()) return bn('Nama pelanggan wajib diisi.');
   if (D(d.e) <= D(d.s)) return bn('Waktu kembali harus setelah waktu ambil.');
-  if (!/^[0-8]$/.test(String(d.bbm).trim())) return bn('Isi level BBM saat diambil (0–8 bar).');
+  if (!sewa && !/^[0-8]$/.test(String(d.bbm).trim())) return bn('Isi level BBM saat diambil (0–8 bar).');
   if (!d.g) return bn('Pilih jenis jaminan.');
-  var body = { nama_pelanggan: d.name.trim(), no_wa: d.wa.trim(), jenis_sewa: d.rent, sumber: d.so, selesai: d.e, bbm_ambil: +d.bbm, kondisi_ambil: d.kondisi.trim(), jaminan: d.g, catatan: d.note.trim(), mulai: d.s };
+  var body = { nama_pelanggan: d.name.trim(), no_wa: d.wa.trim(), jenis_sewa: d.rent, sumber: d.so, selesai: d.e, kondisi_ambil: d.kondisi.trim(), jaminan: d.g, catatan: d.note.trim() };
+  if (!sewa) { body.mulai = d.s; body.bbm_ambil = +d.bbm; }
   if (d.rk) body.rekanan = { nama: d.partner.trim(), unit: d.runit.trim(), biaya: +d.cost || 0, harga: +d.price || 0 };
-  else { body.unit_id = +d.unitId; body.dengan_driver = d.driver ? 1 : 0; }
+  else { if (!sewa) body.unit_id = +d.unitId; body.dengan_driver = d.driver ? 1 : 0; }
   try {
-    if (+d.paid > 0) body.uang_muka = +d.paid;
-    var r = await api('POST', '/pemesanan', body);
-    draft = null; toast('Booking ' + r.kode + ' tersimpan.'); location.hash = '#detail/' + r.id;
+    if (d.id) {
+      var r = await api('PATCH', '/pemesanan/' + d.id, body);
+      var id = d.id; draft = null; toast('Booking ' + r.kode + ' diperbarui.'); location.hash = '#detail/' + id;
+    } else {
+      if (+d.paid > 0) body.uang_muka = +d.paid;
+      var r2 = await api('POST', '/pemesanan', body);
+      draft = null; toast('Booking ' + r2.kode + ' tersimpan.'); location.hash = '#detail/' + r2.id;
+    }
   } catch (e) { bn(esc(e.message)); }
 }
 
@@ -230,6 +243,7 @@ function detView() {
     '</div></div>' +
     '<div class="bar">' + (b.status === 'Dibooking' ? '<button class="btn" data-act="mulai">Mulai sewa</button>' : '') +
     (b.status === 'Disewa' ? '<a class="btn" href="#kembali/' + b.id + '">Pengembalian</a><button class="btn o" data-act="perp">Perpanjang sewa</button>' : '') +
+    (b.status !== 'Selesai' && b.status !== 'Dibatalkan' ? '<button class="btn o" data-act="ubah">Ubah booking</button>' : '') +
     (b.status === 'Menunggu DP' || b.status === 'Dibooking' ? '<button class="btn d" data-act="batalq">Batalkan</button>' : '') + '</div><div id="md"></div>';
 }
 var modal = function (id, title, inner, ok) {
@@ -369,6 +383,7 @@ document.addEventListener('change', function (e) {
   else if (id === 'jf') { jf = e.target.value; route(); }
 });
 document.addEventListener('click', function (e) {
+  var navB = e.target.closest('.side a[href="#booking"]'); if (navB && draft && draft.id) { e.preventDefault(); draft = null; if (location.hash === '#booking') route(); else location.hash = '#booking'; return; }
   var row = e.target.closest('tr[data-go]'); if (row && !e.target.closest('a')) { location.hash = '#' + row.dataset.go; return; }
   var el = e.target.closest('[data-act]'); if (!el) return;
   var a = el.dataset.act, id = curId();
@@ -376,6 +391,21 @@ document.addEventListener('click', function (e) {
   else if (a === 'logout') { run(function () { return api('POST', '/auth/logout').catch(function () { }); }); setSession(null); q = null; draft = null; }
   else if (a === 'cek') { q = { s: $('#ks').value, e: $('#ke').value, trans: $('#kx').value }; route(); }
   else if (a === 'buat') { draft = newDraft(el.dataset.rk ? { rk: true, s: q.s, e: q.e } : { unitId: +el.dataset.u, s: q.s, e: q.e }); if (location.hash === '#booking') route(); else location.hash = '#booking'; }
+  else if (a === 'ubah') {
+    var b = cur; if (!b) return;
+    draft = {
+      id: b.id, kode: b.kode, st: b.status,
+      name: b.nama_pelanggan || '', wa: b.no_wa || '', rent: b.jenis_sewa || 'Harian', so: b.sumber || 'WhatsApp',
+      rk: !!b.rekanan_nama, unitId: b.unit_id || (units[0] ? units[0].id : ''),
+      origUnitId: b.unit_id, origRate: b.unit_id ? Math.round(b.total_sewa / days(b.mulai, b.selesai)) : 0,
+      s: T(b.mulai), e: T(b.selesai),
+      partner: b.rekanan_nama || '', runit: b.rekanan_unit || '', cost: b.biaya_rekanan != null ? b.biaya_rekanan : '', price: b.total_sewa || '',
+      driver: !!b.dengan_driver, g: b.jaminan || '',
+      bbm: b.bbm_ambil != null ? b.bbm_ambil : '', kondisi: b.kondisi_ambil || '', note: b.catatan || '',
+      paid: b.dibayar || 0
+    };
+    location.hash = '#booking';
+  }
   else if (a === 'view') { view = el.dataset.v; route(); }
   else if (a === 'wk') { var n = +el.dataset.d; wkStart = n ? new Date(+wkStart + n * DAY) : null; route(); }
   else if (a === 'pset') { readForm(); $('#fp').value = Math.round(totalOf(draft) * +el.dataset.k); calc(); }

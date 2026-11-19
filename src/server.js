@@ -299,6 +299,7 @@ app.patch('/api/pemesanan/:id', wrap(async (req, res) => {
     if (b.nama_pelanggan !== undefined) set.nama_pelanggan = teks(b.nama_pelanggan, 'Nama pelanggan', 100);
     if (b.no_wa !== undefined) set.no_wa = wa(b.no_wa);
     if (b.catatan !== undefined) set.catatan = teks(b.catatan, 'Catatan', 255, false);
+    if (b.kondisi_ambil !== undefined) set.kondisi_ambil = teks(b.kondisi_ambil, 'Kondisi unit saat diambil', 255, false);
     if (b.jenis_sewa !== undefined) set.jenis_sewa = pilih(b.jenis_sewa, ['Harian', 'Kontrak']);
     if (b.sumber !== undefined) set.sumber = pilih(b.sumber, ['WhatsApp', 'Telepon', 'Datang langsung']);
     if (b.bbm_ambil !== undefined) { if (sewa) throw new Err(409, 'Level BBM saat diambil tidak dapat diubah setelah unit diambil.'); set.bbm_ambil = int(b.bbm_ambil, 'Level bahan bakar saat diambil (0–8 bar)', 0, 8); }
